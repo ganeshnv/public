@@ -1,0 +1,132 @@
+- name: list the url files
+  hosts: vdev
+
+  vars_files:
+    - ./vault.yml
+
+  vars:
+    ArtifactURL: http://artifacturl:18081/artifactory/libs-snapshots-local-generic/com/baml/cswtinfra/windows_infra
+    ArtifactoryUser: userid
+    STAGING_FOLDER: D:\temp\Ansible
+    LOG_PATH: D:\SRVDATA\logs
+    Task: Install
+  ignore_errors: yes
+
+
+  tasks:
+
+
+    - name: wget to fetch products list
+      shell: wget -qO- --user="{{ArtifactoryUser}}" --password="{{ArtifactoryPwd}}" "{{ArtifactURL}}" | grep -Po 'href="\K.*?(?=")' | tail -n +2
+      register: product
+      delegate_to: localhost
+      tags: test1
+
+
+    - name: Display the product name
+      debug:
+        msg: "{{  product.stdout_lines  }}"
+      tags: test
+
+
+
+    - name: wget to fetch products version list
+      shell: wget -qO- --user="{{ArtifactoryUser}}" --password="{{ArtifactoryPwd}}" "{{ArtifactURL}}"/{{item}} | grep -Po 'href="\K.*?(?=")' | tail -1
+      register: version
+      with_items:
+        - "{{  product.stdout_lines  }}"
+      delegate_to: localhost
+      tags: test1
+
+    - name: set fact
+      set_fact: Product="{{product.stdout_lines}}"
+      tags: test1
+
+    - name: Display the product version
+      debug:
+        msg: "{{ version.results }}"
+      tags: test
+
+
+
+    - name: wget to fetch product files list
+      shell: wget -qO- --user="{{ArtifactoryUser}}" --password="{{ArtifactoryPwd}}" "{{ArtifactURL}}"/{{item.item }}{{item.stdout }} | grep -Po 'href="\K.*?(?=")' | tail -n +2
+      register: files
+      with_items:
+        - "{{ version.results }}"
+      delegate_to: localhost
+      tags: test1
+
+    - name: Display the file names
+      debug:
+        msg: "{{ files.results  }}"
+      tags: test
+
+
+
+    - name: Remove staging folder if present
+      win_file:
+        path: "{{ STAGING_FOLDER }}_{{ item }}"
+        state: absent
+      with_items:
+          - "{{Product}}"
+      tags: test
+    - name: Create Master log folder
+      win_file:
+        path: "{{ LOG_PATH }}\\{{ item }}"
+        state: directory
+      with_items:
+          - "{{Product}}"
+      tags: test
+    - name: Create staging folder
+      win_file:
+        path: "{{ STAGING_FOLDER }}_{{ item }}"
+        state: directory
+      with_items:
+          - "{{ Product }}"
+      tags: test
+
+
+
+    - name: download products
+      win_get_url:
+        url: "{{ArtifactURL}}/{{item.0.item.item}}{{item.0.item.stdout }}{{item.1}}"
+        dest: "{{ STAGING_FOLDER }}_{{item.0.item.item}}\\"
+        url_username: "{{ ArtifactoryUser }}"
+        url_password: "{{ ArtifactoryPwd }}"
+      when:  item.1 | search("EXE")
+      with_subelements:
+        - "{{ files.results }}"
+        - stdout_lines
+      tags: test1
+
+
+    - name: Install Products
+      win_command: "{{ STAGING_FOLDER }}_{{ item.0.item.item }}\\{{ item.1 }} /s /l {{ LOG_PATH }}\\{{ item.0.item.item }}\\{{ item.0.item.item }}_{{item.0.item.stdout}}_{{Task}}_Master.log"
+     # when:
+      #  - item.1 | search("EXE")
+      #  - item.0.item.item == "{{Product}}"
+      with_subelements:
+        - "{{ files.results }}"
+        - stdout_lines
+      tags: test1
+
+
+
+    - name: Install Products
+      win_command: "{{ STAGING_FOLDER }}_{{ item.0.item.item }}\\{{ item.1 }} /s /l {{ LOG_PATH }}\\{{ item.0.item.item }}\\{{ item.0.item.item }}_{{ item.0.item.stdout }}_{{Task}}_Master.log"
+      when:
+        -  item.1 | search("EXE")
+        -  Product  == item.0.item.item
+      with_subelements:
+        - "{{ files.results }}"
+        - stdout_lines
+      tags: test
+
+    - name: Remove staging folder if present
+      win_file:
+        path: "{{ STAGING_FOLDER }}_{{ item }}"
+        state: absent
+      with_items:
+        - "{{product.stdout_lines}}"
+      tags: test
