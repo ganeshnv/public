@@ -1,0 +1,143 @@
+#Desc:This script is to create tar file for dropped products in dfs location.
+#How to run:
+#       ./scriptname.sh product version_tar release userid
+#       ./test2.sh Hub.EnterpriseWrite.Linux 17.04.09 11.04.20
+#---------------------------------------------------------------------------------------------
+#
+#variable Declaration
+#-------------------------------------------------------------------
+
+product=${1}
+version=${2}
+version_tar=`echo $version | sed 's/[.]/_/g'`
+release=${3}
+#userid=${4}
+
+DATE=$(date +"%m%d%y")
+#Directory creation
+#--------------------------------------------------------------------
+
+if [ -d /tmp/cedptemp ]; then
+    rm -rf /tmp/cedptemp && mkdir /tmp/cedptemp
+    else
+    mkdir /tmp/cedptemp
+fi
+if [ ! -d /tmp/cedptemp/${1} ]; then
+        echo -e "\e[1;33;40m ===creating directory /tmp/cedptemp/${1}=== \e[0m"
+        mkdir /tmp/cedptemp/${1}
+else
+        echo -e "\033[31m  ERROR: Directory /tmp/cedptemp/${1} exist. Please remove and re-run \e[0m"
+        exit 1
+fi
+
+if [ ! -d /tmp/cedptemp/version_tar ]; then
+        echo -e "\e[1;33;40m ===creating directory /tmp/cedptemp/$version_tar=== \e[0m"
+        mkdir /tmp/cedptemp/$version_tar
+else
+        echo -e "\033[31m ERROR: Directory /tmp/cedptemp/$version_tar exist. Please remove and re-run \e[0m"
+        exit 1
+fi
+
+#copy fizezip.ini
+#-----------------------------------------------------------------
+if ( cp /yumrepo/gwmtrepo/src/CEDP/tar_Creation/filezip.ini /tmp/cedptemp/filezip.ini)
+    then
+    echo
+  else
+    echo -e "\033[31m ERROR: Could not get filezip,ini, please check the /yumrepo/gwmtrepo/src/CEDP/tar_Creation....\e[0m\n";
+fi
+inifile="/tmp/cedptemp/filezip.ini"
+
+# INI file read
+#-------------------------------------------------------------------
+i=0
+for var in `cat $inifile`; do
+        if [ "$var" != "[products],[directories],[files]" ] ; then
+                products[$i]=`echo $var | awk -F',' '{print $1}'`
+                directories[$i]=`echo $var | awk -F',' '{print $2}'`
+                files[$i]=`echo $var | awk -F',' '{print $3}'`
+        fi
+i=$((i + 1))
+done
+#-------------------------------------------------------------------
+
+
+
+#Pre-check
+#--------------------------------------------------------------------
+if [ $# -lt 3 ];  then
+    echo -e "\033[31m ERROR: Arguments missing. Re-run with argument values - products version release userid \e[0m "
+    exit 1
+fi
+#--------------------------------------------------------------------
+
+
+
+#mounting windows share to Linux
+#--------------------------------------------------------------------
+echo -e  "\e[1;33;40m ===Mounting product location...=== \e[0m"
+mount.cifs //remotehost/External_build2$/GPC_CEDP/$product/$release/$version /tmp/cedptemp/${1} -o sec=ntlm,vers=1.0,noserverino,credentials=/yumrepo/gwmtrepo/src/CEDP/tar_Creation/forscm.txt
+#=====
+#cat /yumrepo/gwmtrepo/src/CEDP/tar_Creation/forscm.txt
+#username=repodqc
+#password=ceHm2j75
+#======
+Exit_code=$?
+#echo $Exit_code
+if [ $Exit_code = 0 ];then
+        i=0
+        while [ $i -lt ${#products[@]} ]; do
+                if [ "$product" == "${products[i]}" ]; then
+                        cd /tmp/cedptemp/${1}
+                        cp -r * /tmp/cedptemp/$version_tar
+                        if [ -d "/tmp/cedptemp/$version_tar/$version" ]; then
+                                version_tar_1="$version_tar/$version"
+                        #       cd /tmp/cedptemp/$version_tar/$version
+                        #       if [ -f "/tmp/cedptemp/$version_tar/$version/*.zip" ]; then
+                         #              unzip /tmp/cedptemp/$version_tar/$version/*.zip
+                          #     fi
+                        else
+                                version_tar_1="$version_tar"
+                        fi
+                        cd  /tmp/cedptemp/$version_tar_1
+
+                #               file_tar=`ls /tmp/cedptemp/$version_tar_1/*.zip` > /dev/null 2>&1
+                #       if [ -f "$file_tar" ]; then
+                #               unzip $file_tar
+                #       fi
+
+                        echo -e  "\e[1;33;40m ===Removing .mht files...=== \e[0m"
+                        rm -rf /tmp/cedptemp/$version_tar_1/*.mht
+                        echo -e "\e[1;33;40m ===Convert files at /tmp/cedptemp/$version_tar_1 from dos to unix format...=== \e[0m"
+                        echo "" | dos2unix             #dos2unix  $( file * | grep -i ASCII  | grep -i  CRLF |  awk -F":" '{print $1}' )
+                        cd /tmp/cedptemp
+                        mv /tmp/cedptemp/$version_tar_1 ${files[i]}_${version_tar}
+                        echo -e "\e[1;33;40m ===Creating tar files...=== \e[0m"
+                        tar -cvzf ${files[i]}_${version_tar}.tar.gz ${files[i]}_${version_tar}
+                        mv ${files[i]}_${version_tar}.tar.gz /yumrepo/gwmtrepo/src/CEDP/${directories[i]}
+                        if [ $? = 0 ]; then
+                                 echo -e "\e[1;32;40m===tar file created successfully at /yumrepo/gwmtrepo/src/CEDP/${directories[i]}/.. \e[0m"
+                        else
+                                echo  -e "\033[31m ERROR:  unable to upload tar. Please check repo server space/ directory permission... \e[0m"
+                        fi
+
+
+
+
+                        echo -e "\e[1;33;40m ===Deleting temp files...=== \e[0m"
+
+                        umount /tmp/cedptemp/${1}
+                        rm -rf /tmp/cedptemp
+
+                        break
+                fi
+                       # echo ${products[i]} ${directories[i]} ${files[i]}
+                                                ((i++))
+
+        done
+else
+        echo "========================="
+        echo -e "\033[31m ERROR: Mount failed. Please check arugument values/ order - products version release \e[0m"
+        rm -rf /tmp/cedptemp
+        exit 1
+fi
