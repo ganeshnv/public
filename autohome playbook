@@ -1,0 +1,25 @@
+---
+- hosts: localhost
+  tasks:
+
+    - name: Copy auto.home script from efs
+      copy:
+        src: /efs/dist/linux/RHEL-6/SOE-RHEL-6.8-2H16/common/stack/scripts/simple_auto_home
+        dest: /etc/auto.home
+        mode: 0755
+
+    - name: Updating autofs.master
+      lineinfile:
+        dest: "/etc/auto.master"
+        owner: root
+        group: root
+        mode: 0644
+        state: present
+        create: yes
+        line: "/home /etc/auto.home"
+
+    - name: autofs resatrt
+      service:
+        name: autofs
+        state: restarted
+        enabled: yes
