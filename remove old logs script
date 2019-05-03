@@ -1,0 +1,59 @@
+#!/bin/bash
+
+#Verify the log space
+echo -e "\e[1;33;40m ##Initial log space##\e[0m"
+df -Th /hosting /hosting/logs
+#Clear Tomcat logs
+#Remove files older than 10 days
+
+# catalina.2019-01-29.log
+find /hosting/logs/tom_app-*-0?/ -maxdepth 1 -name 'catalina.201?*' -mtime +10 |xargs rm -f
+
+# host-manager.2019-01-29.log
+find /hosting/logs/tom_app-*-0?/ -maxdepth 1 -name 'host-manager.201?*' -mtime +10 |xargs rm -f
+
+# manager.2019-01-29.log
+find /hosting/logs/tom_app-*-0?/ -maxdepth 1 -name 'manager.201?*' -mtime +10 |xargs rm -f
+
+# localhost.2019-01-29.log
+find /hosting/logs/tom_app-*-0?/ -maxdepth 1 -name 'localhost.201?*' -mtime +10 |xargs rm -f
+
+# localhost_access_log.2019-03-01.txt
+find /hosting/logs/tom_app-*-0?/ -maxdepth 1 -name 'localhost_access_log.201?*' -mtime +10 |xargs rm -f
+
+# catalina.out
+i=`ls /hosting/logs/tom_app-*-0?/catalina.out 2>/dev/null`
+for file in $i;
+do
+echo > $file
+done
+
+
+# Clear Apache logs
+# Remove files older than 10 days
+find /hosting/logs/apache24/web-*-?/web1/ -maxdepth 1 -name 'access.201?*' -mtime +10 |xargs rm -f
+
+#Remove old products to make space on /hosting directory
+cd /hosting/products/ccdp_bs_api_customer_ViewAddress/log ; rm -rf 2018* 2017*
+rm -rf `ls /hosting/products/ccdp_bs_api_customer_ViewAddress/log/* | grep 2018`
+cd /hosting/products/ccdp_ds_api_contactdata_cmxadapter/log ; rm -rf 2018* 2017*
+rm -rf `ls /hosting/products/ccdp_ds_api_contactdata_cmxadapter/log/* | grep 2018`
+
+#Verify the log space
+echo -e "\e[1;32;40m ##Old logs are removed##\e[0m"
+echo -e "\e[1;33;40m ##current log space##\e[0m"
+df -Th /hosting /hosting/logs
+
+
+#rm -rf `ls /hosting/logs/tom_app-*-0?/* 2>/dev/null | grep -v -e manager.2019 -e localhost_access_log.2019 -e localhost.2019 -e host-manager.2019 -e GC.log -e catalina.2019 -e catalina.out`
+#i=`ls /hosting/logs/tom_app-*-0?/catalina.out 2>/dev/null`
+#for file in $i;
+#do
+#echo > $file
+#done
+#Clear Apache logs
+#rm -rf `ls /hosting/logs/apache24/web-*-?/web1/* 2>/dev/null | grep -v -e access.2019 -e errors -e mod_jk.log`
+#Verify the log space
+#echo -e "\e[1;32;40m ##Old logs are removed##\e[0m"
+#echo -e "\e[1;33;40m ##current log space##\e[0m"
+#df -Th /hosting/logs
