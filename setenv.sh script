@@ -1,0 +1,252 @@
+#!/bin/bash
+#: Title       : Tomcat_setenv.sh
+#: Author      : GPC_CEDP
+#: Version     : 1.0
+#: Description : This is the script to update setenv.sh with MetaDB PV
+#: REQ         : setenv_template.sh
+### Set Global Variables ###
+
+export prog=$(basename $0)
+export DATE=$(date +%Y%m%d_%H%M)
+export release_no=$( echo "$2" | sed -n 's/\./_/gp' )
+export installer_base=/hosting/products/IR_Software
+export prdct_installer_base=${installer_base}/setenv
+export app_name="Setenv.sh Update"
+export file_Lst="setenv_template.sh"
+export USER=$(whoami)
+export METADB_DUMP="/var/tmp/infra-metadb-control.txt"
+
+
+export LOG=${installer_base}/logs/setenv_update.log
+### Set ANSI Text Colors ###
+RED='\033[31m' ; GRN='\033[32m' ; YEL='\033[33m' ; NAVY='\033[34m' ; PINK='\033[35m' ; BLU='\033[36m' ; ## Really this BLU is CYAN
+NORM='\033[0m' ; BOLD='\033[44;1;31m' ; ## RED ON BLU Background
+export RED GRN YEL BLU NAVY PINK BOLD NORM
+
+### Functions Sections Starts
+
+Download_archive (){
+  echo "[Step 0.1] Download setenv.sh templates archive " | tee -a $LOG
+  cd ${installer_base}/setenv
+  if [ -d $prdct_installer_base ] || [ -e $src_tar ]
+    then
+    rm -rf setenv_template.sh || echo -e "${BOLD} ER: ${NORM} Old downloaded files could not be deleted" | tee -a $LOG
+  else
+    echo -e "Old downloaded files don't seem to exist, proceeding ... " >> $LOG
+  fi
+  if (cd ${installer_base}/setenv && wget http://reposerver/gwmtrepo/src/CEDP/Tomcat_Utility/setenv_template.sh) > /dev/null 2>&1
+    then
+    echo -e "${GRN}  OK: ${NORM} Successfully downloaded  and extracted tar file ...... " | tee -a $LOG
+        rm -f /tmp/wget.log.${$}
+  else
+    echo -e "${BOLD} ER: ${NORM} Could not wget and/or untar $src_tar .... \n" | tee -a $LOG ;
+        cat /tmp/wget.log.${$} | tee -a $LOG
+        ls -ald $src_tar >>$LOG 2>&1 #for debug purposes
+        file $src_tar >>$LOG 2>&1 #for debug purposes
+        tar -xzf $src_tar >>$LOG 2>&1 #for debug purposes
+        echo
+    echo -e "Usage: $prog {fullInstall|Uninstall} {release_no} \n" | tee -a $LOG
+        return 1
+  fi
+}
+
+seek_and_replace(){
+# function to get each variable from the  config file
+# get the value from MetaDB dump and replace the value
+# config files log4j2.xml api.properties mule-app.properties
+
+local config_file="$1"
+local metadb_dump="$2"
+local pvar
+
+
+
+# This loop creates  the list of variables needed
+# perl -ne 'while(/(LA.*?|API.*|ds.*)\$/g){ print "$1\n" }'
+# only variables starting with LA API ds
+# perl -ne 'while(/(\$.*?)\$/g){ print "$1\n" }'
+# any text string between $ $ is a variable
+for pvar in $(perl -ne 'while(/\$(\w+)\$/g){ print "$1\n" }' "$config_file" |sort|uniq); do
+
+        # Check for missing variables in profile.txt
+
+        if ! grep -q "$pvar" $metadb_dump; then
+        echo -e "${BOLD} ER: ${NORM} The Variable $pvar was not found in $metadb_dump" | tee -a $LOG
+        return 1
+        fi
+
+        #get the variable value from profile.txt
+
+        local pvar_value="$(grep -w $pvar $metadb_dump|awk -F\= '{print $2}')"
+
+        # Check for empty  variables
+
+        if [ -z $pvar_value ];then
+        echo -e "${BOLD} ER: ${NORM} The Variable $pvar was  found in $metadb_dump but it is empty or null" | tee -a $LOG
+        grep  "$pvar" $metadb_dump | tee -a $LOG
+        return 1
+        else
+
+        # The variable was found so proceed
+        # Replace the value in $config_file
+
+        if ! sed -i 's|\$'"$pvar"'\$|'"$pvar_value"'|' $config_file ; then
+                        echo -e "${BOLD} ER: ${NORM} Substitution of $pvar failed" | tee -a $LOG
+                        return 1
+                fi
+        fi
+
+done
+
+
+}
+
+update_files(){
+
+echo "[Step 0.2] Updating files with MetaDB values " | tee -a $LOG
+
+export file="setenv_template.sh"
+
+        #check if file exists
+
+        if [ -f ${installer_base}/setenv/$file ]; then
+                # Removing possible \r and ^M characters
+                sed -i 's/\r//'  $installer_base/setenv/${file} || { echo 'ER: Error while updating files...' ; return 1; }
+                # calling our magic function
+                seek_and_replace ${installer_base}/setenv/$file $METADB_DUMP || { echo 'ER: Error while updating files...' ; return 1; }
+                chown hosting:hostnggp ${installer_base}/setenv/$file
+        else
+                echo -e "${BOLD} ER: ${NORM} file $i not found" | tee -a $LOG
+                echo "$prdct_installer_base" | tee -a $LOG
+                ls -al ${installer_base}/setenv/ | tee -a $LOG
+                return 1
+        fi
+
+echo -e "${GRN}  OK: ${NORM} Successfully updated files with MetaDB Values ...... " | tee -a $LOG
+
+}
+
+
+copy_zip_file(){
+
+echo "[Step 0.3] Copy setenv.sh file to final destination " | tee -a $LOG
+export tomcat_path=/hosting/configs/tomcat8
+for ins in `ls $tomcat_path`
+do
+echo "##$ins##"
+export i=`echo "${ins}" | awk -F'-' '{print $3}' | cut -c 2`
+
+        if [ -f /hosting/configs/tomcat8/${ins}/bin/setenv.sh ];then
+                cp -a /hosting/configs/tomcat8/${ins}/bin/setenv.sh /hosting/configs/tomcat8/${ins}/bin/setenv.sh.beforeupdate.$$
+        fi
+if (cat  $installer_base/setenv/setenv_template.sh > /hosting/configs/tomcat8/${ins}/bin/setenv.sh); then
+                sed -i 's/JVM_NAME/'${ins}'/g' /hosting/configs/tomcat8/${ins}/bin/setenv.sh
+                echo "$ins setenv file is replaced Successfully" | tee -a $LOG
+
+ else
+           echo "$ins setenv file is not replaced" | tee -a $LOG
+
+fi
+
+done
+
+}
+
+
+heapmem ()
+{
+# update 4GB maxheap only for 1st & 2nd instances
+export tomcat_path=/hosting/configs/tomcat8
+for ins in `ls $tomcat_path`
+do
+export i=`echo "${ins}" | awk -F '-' '{print $3}' | cut -c 2`
+if [ $i = 1 ]; then
+sed -i 's/Xmx2048m/Xmx4096m/g' /hosting/configs/tomcat8/${ins}/bin/setenv.sh
+elif [ $i = 2 -o $i = 6 ]; then
+sed -i 's/Xmx2048m/Xmx6144m/g' /hosting/configs/tomcat8/${ins}/bin/setenv.sh
+fi
+done
+}
+
+restart_tomcat_instances () {
+echo "restarting Tomcat instances.."
+service tomcatd restart
+
+}
+
+Update_directory_permission ()
+{
+cd /hosting/;
+chown -R hosting:hostnggp /hosting -R && echo -e  "${GRN}  OK:${NORM} Directory Permission updated on under all /hosting/ directories/files " || echo "${BOLD} ER:${NORM} Error updating directory permission under /hosting "
+find /hosting -type d -exec chmod 750 {} + && find /hosting -type f -perm /g=w -exec chmod g-w {} \; && find /hosting -type f -perm /o=w -exec chmod o-w {} \;
+}
+
+
+### Functions Sections ends
+
+######### MAIN #########
+
+#meta_db_dump $METADB_DUMP || exit $?
+
+echo "
+  ====== INSTALL VARIABLES ======
+  prdct_installer_base=${prdct_installer_base}/
+  app_name="$app_name"
+  DATE=$DATE
+  INSTALL LOG=$LOG
+  ===============================
+"
+sleep 2
+
+### Initiate DIRs, LOGs AND status_file
+if [ ! -d ${installer_base}/setenv ];then
+ mkdir -p ${installer_base}/setenv || { echo "Unable to create the directory" >&2; exit 1; }
+else
+        :
+fi
+
+if [ ! -d ${installer_base}/logs/ ];then
+        mkdir -p ${installer_base}/logs/ || { echo "Unable to create the directory" >&2; exit 1; }
+else
+        :
+fi
+
+if [ -f $LOG ];then
+        mv $LOG $LOG.PREV
+fi
+
+
+echo "################ $(date) $0 - Started ################" > $LOG ;
+
+
+
+case "$1" in
+    fullInstall)
+         Download_archive && echo "=== STEP OK: Tar file download ..... Done ===" || exit $? ;
+                 update_files && echo "=== STEP OK: Update Files with MetaDB values ..... Done ===" || exit $? ;
+                 copy_zip_file && echo "=== STEP OK: Copy zip Package ..... Done ===" || exit $? ;
+                 heapmem && echo "=== STEP OK:Updated max heap for 1st and 2nd instances ..... Done ===" || exit $? ;
+                 restart_tomcat_instances && echo "=== STEP OK: Restarting BS Tomcat ..... Done ===" ;
+                 Update_directory_permission && echo "=== STEP OK: Update_directory_permission Done ===" || exit $? ;
+                 #sleep 2
+                 #validate_deployment && echo "=== STEP OK: Validate Deployment ..... Done ===" || exit $? ;
+         #Update_directory_permission && echo "=== STEP OK: Update_directory_permission Done ===" || exit $? ;
+    ;;
+    Uninstall)
+         echo "Please attempt an uninstall only if this product has been installed " ;
+         #delete_deployment && echo "=== STEP OK: Deployment Directory Deletion Done ===" || exit $? ;
+         #Update_directory_permission && echo "=== STEP OK: Update_directory_permission Done ===" || exit $? ;
+    ;;
+    *)
+         echo "Usage: $prog {fullInstall|Uninstall} {release_no} "
+         exit 1
+    ;;
+esac
+
+
+### remove ANSI formatting from INSTALL LOG
+sed -r -i "s/\x1B\[([0-9]{1,2}(;[0-9]{1,2})?)?[m|K]//g" $LOG
+echo -e "${GRN}  \n  Deployment of $app_name was successfully completed !! \n ${NORM}" | tee -a $LOG
+echo "INSTALL LOG = $LOG"
+echo "################ $(date) $0 - Completed ################" >> $LOG ;
+
