@@ -1,0 +1,36 @@
+#!/bin/bash
+#chkconfig: 345 99 10
+#description: auto start/stop appstopstart
+
+case "$1" in
+ start)
+
+su - user -c "path start"
+### Create the lock file ###
+touch /var/lock/subsys/appstopstart;;
+
+ stop)
+
+su - user -c "path stop"
+### Now, delete the lock file ###
+rm -f /var/lock/subsys/appstopstart;;
+
+ restart)
+
+./$0 stop
+./$0 start;;
+
+status)
+
+if [ -f /var/lock/subsys/appstopstart ]; then
+     echo -e "\e[1;32;40m service is running \e[0m"
+else
+     echo -e "\e[1;33;40m service not running \e[0m"
+fi;;
+
+ *)
+
+echo "Usage: $0 {start|stop|status|restart}"
+exit 1;;
+
+esac
