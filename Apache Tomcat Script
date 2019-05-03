@@ -1,0 +1,427 @@
+#!/bin/bash
+
+### Set ANSI Text Colors ###
+RED='\033[31m' ; GRN='\033[32m' ; YEL='\033[33m' ; NAVY='\033[34m' ; PINK='\033[35m' ; BLU='\033[36m' ; ## Really this BLU is CYAN
+BOLD='\033[44;1;31m' ; ## RED ON BLU Background
+NORM='\033[0m' ;
+export RED GRN YEL BLU NAVY PINK BOLD NORM
+
+lane_file="`echo /etc/.cts_crumbs/gwmt_environment.env`"
+if [ -f $lane_file ]; then
+:
+else
+/usr/bin/wget --quiet --no-cache -O - http://reposerver/gwmtrepo/lxsrf/bin/lxid | bash >> /dev/null
+fi
+export fetch_lane=`cat /etc/.cts_crumbs/gwmt_environment.env | grep "SCM_SUBLANE" | cut -d "=" -f 2 | cut -d "'" -f 2`
+
+if [ "$fetch_lane" = "SE" ] || [ "$fetch_lane" = "se" ] ; then
+export lane="se" ;
+elif [ "$fetch_lane" = "DIF" ] || [ "$fetch_lane" = "dif" ] || [ "$fetch_lane" = "DEV" ]; then
+export lane="dif"
+elif [ "$fetch_lane" = "pipeline1" ] || [ "$fetch_lane" = "pl1" ] || [ "$fetch_lane" = "PL1" ] || [ "$fetch_lane" = "PIPELINE1" ] ; then
+export lane="pl1"
+elif [ "$fetch_lane" = "pipeline2" ] || [ "$fetch_lane" = "pl2" ] || [ "$fetch_lane" = "PL2" ] || [ "$fetch_lane" = "PIPELINE2" ]; then
+export lane="pl2";
+elif [ "$fetch_lane" = "SAPE" ] || [ "$fetch_lane" = "SA.PE" ] || [ "$fetch_lane" = "sape" ] || [ "$fetch_lane" = "QA" ] || [ "$fetch_lane" = "qa" ]; then
+export lane="qa";
+elif [ "$fetch_lane" = "PODA" ] || [ "$fetch_lane" = "poda" ] || [ "$fetch_lane" = "PROD" ] ; then
+export lane="services";
+elif [ "$fetch_lane" = "PODB" ] || [ "$fetch_lane" = "podb" ] || [ "$fetch_lane" = "PROD" ] ; then
+export lane="services";
+elif [ "$fetch_lane" = "PODC" ] || [ "$fetch_lane" = "podc" ] || [ "$fetch_lane" = "PROD" ]; then
+export lane="services";
+elif [ "$fetch_lane" = "PODD" ] || [ "$fetch_lane" = "podd" ] || [ "$fetch_lane" = "PROD" ]; then
+export lane="services";
+else
+echo -e "${BOLD} ER:${NORM} Error fetching lane information" ; exit 1;
+fi
+
+echo "Configuring Apache HTTP and Tomcat"
+
+Directory_creation () {
+
+if [  -d /tmp/ApacheTomcat ]; then
+rm -rf /tmp/ApacheTomcat && mkdir -p /tmp/ApacheTomcat
+else
+mkdir -p /tmp/ApacheTomcat || { echo "Unable to create the directory" >&2; }
+fi
+}
+
+Apache_configuration () {
+echo "Configuring Apache http with SSL" | tee -a $LOG
+export apache_path=/hosting/configs/apache24
+export repo_path=http://reposerver/gwmtrepo/src/CEDP/Tomcat_Utility
+# Download required files from repo server
+cd /tmp/ApacheTomcat/; wget $repo_path/httpd.conf.1 2>/dev/null
+cd /tmp/ApacheTomcat/; wget $repo_path/httpd.conf.2 2>/dev/null
+cd /tmp/ApacheTomcat/; wget $repo_path/echo_pwd.sh 2>/dev/null
+cd /tmp/ApacheTomcat/; wget $repo_path/cert_chain 2>/dev/null
+if [ -d /hosting/configs/apache24/ ] ; then
+for instance in `ls /hosting/configs/apache24/`
+do
+echo "##$instance is updating##"
+# Updating default httpd.conf file
+if [ ! -f  ${apache_path}/${instance}/web1/conf/httpd.conf_org ]; then
+        cat ${apache_path}/${instance}/web1/conf/httpd.conf > ${apache_path}/${instance}/web1/conf/httpd.conf_org
+else
+        cat ${apache_path}/${instance}/web1/conf/httpd.conf_org > ${apache_path}/${instance}/web1/conf/httpd.conf
+fi
+
+# comment unwanted modules to avoid GIS alert
+        sed -i '/authn_file_module/s/^/#/' ${apache_path}/${instance}/web1/conf/httpd.conf
+        sed -i '/authz_groupfile_module/s/^/#/' ${apache_path}/${instance}/web1/conf/httpd.conf
+        sed -i '/CustomLog/s/^/#/' ${apache_path}/${instance}/web1/conf/httpd.conf
+# update the certification chain
+cat /tmp/ApacheTomcat/cert_chain >  ${apache_path}/${instance}/web1/conf/ssl/intermediate.crt
+export i=`echo "${instance}" | awk -F'-' '{print $3}'`
+# configurations of First Apache instance
+ if [ `echo "${instance}" | awk -F'-' '{print $3}'` = 1 ] ; then
+        cd /tmp/ApacheTomcat; wget $repo_path/BS_Workers 2>/dev/null
+        cd ${apache_path}/${instance}/web1/conf
+        cat /tmp/ApacheTomcat/httpd.conf.1 >> httpd.conf && sed -i 's/BSinstance/'$instance'/g' httpd.conf
+        echo yes | mv /tmp/ApacheTomcat/BS_Workers workers.properties
+        sed -i '/100'${i}'0/s/^/#/' httpd.conf
+        sed -i '/160'${i}'0/s/^/#/' httpd.conf
+        sed -i '/mod_remoteip.so/s/^/#/' httpd.conf
+        sed -i '/access.%F/ a CustomLog "|/hosting/products/apache24/bin/rotatelogs -L '${apache_path}'/'${instance}'/web1/logs/access -n 10 '${apache_path}'/'${instance}'/web1/logs/accessr 86400" combined' httpd.conf
+# configurations of First Apache instance for production server
+         if [ "$lane" = "services" ] ; then
+            sed -i 's/JK/26/g' workers.properties
+         else
+            sed -i 's/JK/20/g' workers.properties
+         fi
+        echo yes | cp /tmp/ApacheTomcat/echo_pwd.sh ssl/ && chmod 755 ssl/echo_pwd.sh
+# Certificate update for First Apache instance
+         if [ "$lane" = "dif" ] || [ "$lane" = "se" ] || [ "$lane" = "qa" ]; then
+                cd /tmp/ApacheTomcat/; wget $repo_path/certificate_keys/api.${lane}.hew.domain.pfx.tar.gz  2>/dev/null && tar -xzf api.${lane}.hew.domain.pfx.tar.gz
+                echo yes | mv /tmp/ApacheTomcat/api.${lane}.hew.domain.pfx/* ${apache_path}/${instance}/web1/conf/ssl/
+         else
+            cd /tmp/ApacheTomcat/; wget $repo_path/certificate_keys/api.${lane}.domain.pfx.tar.gz  2>/dev/null && tar -xzf api.${lane}.domain.pfx.tar.gz
+                echo yes | mv /tmp/ApacheTomcat/api.${lane}.domain.pfx/* ${apache_path}/${instance}/web1/conf/ssl/
+      fi
+##################### configurations of Second Apache instance###############################################
+ else [ `echo "${instance}" | awk -F'-' '{print $3}'` = 2 ] ;
+        cd /tmp/ApacheTomcat; wget $repo_path/DS_Workers 2>/dev/null
+                cd ${apache_path}/${instance}/web1/conf
+        cat /tmp/ApacheTomcat/httpd.conf.2  >> httpd.conf && sed -i 's/DSinstance/'$instance'/g' httpd.conf && rm -rf /tmp/ApacheTomcat/httpd.conf.2
+        echo yes | mv /tmp/ApacheTomcat/DS_Workers workers.properties
+        sed -i '/100'${i}'0/s/^/#/' httpd.conf
+        sed -i '/160'${i}'0/s/^/#/' httpd.conf
+        sed -i '/mod_remoteip.so/s/^/#/' httpd.conf
+        sed -i '/access.%F/ a CustomLog "|/hosting/products/apache24/bin/rotatelogs -L '${apache_path}'/'${instance}'/web1/logs/access -n 10 '${apache_path}'/'${instance}'/web1/logs/accessr 86400" combined' httpd.conf
+# configurations of Second Apache instance for production server
+     if [ "$lane" = "services" ] ; then
+            sed -i 's/JK/26/g' workers.properties
+         else
+            sed -i 's/JK/20/g' workers.properties
+         fi
+        echo yes | mv /tmp/ApacheTomcat/echo_pwd.sh ssl/ && chmod 755 ssl/echo_pwd.sh
+# Certificate update for Second Apache instance
+         if [ "$lane" = "dif" ] || [ "$lane" = "se" ] || [ "$lane" = "qa" ]; then
+            cd /tmp/ApacheTomcat/; wget $repo_path/certificate_keys/dapi.${lane}.hew.domain.pfx.tar.gz  2>/dev/null && tar -xzf dapi.${lane}.hew.domain.pfx.tar.gz
+                echo yes | mv /tmp/ApacheTomcat/dapi.${lane}.hew.domain.pfx/* ${apache_path}/${instance}/web1/conf/ssl/
+         else
+            cd /tmp/ApacheTomcat/; wget $repo_path/certificate_keys/dapi.${lane}.domain.pfx.tar.gz  2>/dev/null && tar -xzf dapi.${lane}.domain.pfx.tar.gz
+                echo yes | mv /tmp/ApacheTomcat/dapi.${lane}.domain.pfx/* ${apache_path}/${instance}/web1/conf/ssl/
+      fi
+  fi
+
+done
+else
+     echo "${BOLD} ER:${NORM} Apache product is missing, please check"
+     exit 0
+fi
+}
+
+
+Tomcat_configuration () {
+
+#################
+#log rotate file for catalina.out
+if [  ! -f /etc/logrotate.d/catalina ]; then
+touch /etc/logrotate.d/catalina;
+insert="#Added by AIE to remediate tomcat logging #
+#DG AIE PBCD
+/hosting/logs/tom_app-*-0?/catalina.out {
+   copytruncate
+   daily
+   rotate 10
+   compress
+   missingok
+  #size 100M
+   dateext
+   create 640 hosting hostnggp
+}"
+echo "$insert" > /etc/logrotate.d/catalina
+else
+echo -e "\e[1;33;40m catalina logrotate already configured\e[0m"
+fi
+####################
+
+echo "Configuring Tomcat without SSL"
+export tomcat_path=/hosting/configs/tomcat8
+rm -rf $tomcat_path/webapps
+if [ -d /hosting/configs/tomcat8 ]; then
+p=0
+for ins in `ls $tomcat_path`
+do
+echo "##$ins is updating##"
+# Updating default server.xml file
+if [ ! -f  ${tomcat_path}/${ins}/conf/server.xml_org ]; then
+        cat ${tomcat_path}/${ins}/conf/server.xml > ${tomcat_path}/${ins}/conf/server.xml_org
+else
+        cat ${tomcat_path}/${ins}/conf/server.xml_org > ${tomcat_path}/${ins}/conf/server.xml
+fi
+
+##############
+# configure logrotate on logging.properties file
+sed -i -e '/^1/s/^/#/' -e '/^3/s/^/#/' -e '/^4/s/^/#/' ${tomcat_path}/${ins}/conf/logging.properties
+if (grep -q "maxDays" ${tomcat_path}/${ins}/conf/logging.properties 2>/dev/null); then
+:
+else
+sed -i '/prefix = localhost/ a 2localhost.org.apache.juli.AsyncFileHandler.maxDays = 10' ${tomcat_path}/${ins}/conf/logging.properties
+fi
+#############
+# configure logrotate on server.xml
+sed -i '/localhost_access_log/ c prefix="localhost_access_log" suffix=".txt" maxDays="10"' ${tomcat_path}/${ins}/conf/server.xml
+sed -i '/pattern="%h/ c pattern="%h %l %u %t &quot;%r&quot; %s %b" />' ${tomcat_path}/${ins}/conf/server.xml
+############
+
+export i=`echo "${ins}" | awk -F'-' '{print $3}' | cut -c 2`
+cd /hosting/configs/tomcat8/${ins}/conf/
+# updating download war file size configuration
+sed -i 's/52428800/104857600/g' $tomcat_path/${ins}/webapps/manager/WEB-INF/web.xml
+# server.xml configurations
+sed -i '/tc_bofa.jks/ i keystoreType="PKCS12"' server.xml
+sed -i 's/tc4bofa/Password1/g' server.xml
+sed -i 's/pattern="%h %l %u %t &quot;%r&quot; %s %b"/pattern="%h %t [%r] [%I] %s %D %b"/g' server.xml
+# server.xml configurations for production server
+     if [ "$lane" = "services" ] ; then
+#AJP port packet size upgrade for production server
+sed -i '/protocol="AJP\/1.3"/ c <Connector port="26'${i}'20" protocol="AJP/1.3" redirectPort="26'${i}'15" packetSize="65536" />' server.xml
+sed -i '/\<Connector port="26'${i}'10"/,/\/>/ {
+                /\<Connector port="26'${i}'10"/i\
+<!--
+                /\/>/a\
+-->
+}
+' server.xml
+                        if (( $i % 2 != 0 ));  then
+                                 p=$((p+1))
+                           sed -i 's/<Connector port="26'${i}'15"/<Connector port="900'${p}'"/g' server.xml
+                        else
+                           sed -i 's/<Connector port="26'${i}'15"/<Connector port="800'${p}'"/g' server.xml
+                        fi
+  else
+#AJP port packet size upgrade for lower lanes
+sed -i '/protocol="AJP\/1.3"/ c <Connector port="20'${i}'20" protocol="AJP/1.3" redirectPort="20'${i}'15" packetSize="65536" />' server.xml
+sed -i '/\<Connector port="20'${i}'10"/,/\/>/ {
+                /\<Connector port="20'${i}'10"/i\
+<!--
+                /\/>/a\
+-->
+}
+' server.xml
+                         if (( $i % 2 != 0 ));  then
+                                 p=$((p+1))
+                             sed -i 's/<Connector port="20'${i}'15"/<Connector port="900'${p}'"/g' server.xml
+                          else
+                             sed -i 's/<Connector port="20'${i}'15"/<Connector port="800'${p}'"/g' server.xml
+                         fi
+   fi
+# certification configurations
+ if [ "$lane" = "dif" ] || [ "$lane" = "se" ] || [ "$lane" = "qa" ]; then
+
+         if (( $i % 2 != 0 ));  then
+
+             sed -i '/tc_bofa.jks/ c keystoreFile="/hosting/products/serverscerts/api.'$lane'.hew.domain.pfx"' server.xml
+          else
+             sed -i '/tc_bofa.jks/ c keystoreFile="/hosting/products/serverscerts/dapi.'$lane'.hew.domain.pfx"' server.xml
+         fi
+ else
+
+         if (( $i % 2 != 0 ));  then
+             sed -i '/tc_bofa.jks/ c keystoreFile="/hosting/products/serverscerts/api.'$lane'.domain.pfx"' server.xml
+          else
+             sed -i '/tc_bofa.jks/ c keystoreFile="/hosting/products/serverscerts/dapi.'$lane'.domain.pfx"' server.xml
+         fi
+  fi
+done
+else
+     echo "${BOLD} ER:${NORM} Tomcat product is missing, please check"
+     exit 0
+fi
+}
+
+delete_download_directory() {
+if [ -d /tmp/ApacheTomcat/ ] ;then
+     rm -rf /tmp/ApacheTomcat/
+else
+     echo -e " ${GRN}  OK:${NORM} /tmp/ApacheTomcat/ does not seem to exist"
+fi
+}
+
+Update_directory_permission () {
+cd /hosting/;
+chown -R hosting:hostnggp /hosting -R
+find /hosting -type d -exec chmod 750 {} + && find /hosting -type f -perm /g=w -exec chmod g-w {} \; && find /hosting -type f -perm /o=w -exec chmod o-w {} \;
+}
+
+get_metadb_profile () {
+
+# Control Variable for short name vs FQDN
+USING_FQDN=0
+
+echo "Getting MetaDB profile for host: $(hostname -s)"
+
+if wget -q -o /tmp/wget.output.$$ http://metadbserver.domain/metadbprofilerservice/profilervariable.asmx/GetProfilerVariablesMachine?machineName=$(hostname -s) -O /var/tmp/infra-metadb-control-$(hostname -s).txt ; then
+        echo " Profile for $(hostname -s) downloaded successfully"
+        rm /tmp/wget.output.$$
+ else
+        echo " Error downloading the profile"
+        cat /tmp/wget.output.$$
+        return 1
+fi
+
+# Simple Check for downloaded Profile
+
+if egrep -q '<add key=' /var/tmp/infra-metadb-control-$(hostname -s).txt ;then
+
+        egrep '<add.*' /var/tmp/infra-metadb-control-$(hostname -s).txt |cut -d \" -f2,4 |tr \" \= > /var/tmp/infra-metadb-control-$(hostname -s).clean.txt
+else
+        echo " Downloaded file does not seems to have profile variables"
+        echo " Trying using FQDN"
+        # Lets try using FQDN a.k.a hostname -f
+        if wget -q -o /tmp/wget.output.$$ http://metadbserver.domain/metadbprofilerservice/profilervariable.asmx/GetProfilerVariablesMachine?machineName=$(hostname -f) -O /var/tmp/infra-metadb-control-$(hostname -f).txt ; then
+                echo "Profile for $(hostname -f) downloaded successfully"
+                rm /tmp/wget.output.$$
+        else
+                echo " Error downloading the profile"
+                cat /tmp/wget.output.$$
+                return 1
+        fi
+
+        # Test Again for profile variables
+        if egrep -q '<add key=' /var/tmp/infra-metadb-control-$(hostname -f).txt ;then
+                egrep '<add.*' /var/tmp/infra-metadb-control-$(hostname -f).txt |cut -d \" -f2,4 |tr \" \= > /var/tmp/infra-metadb-control-$(hostname -f).clean.txt
+                USING_FQDN=1
+        else
+                echo " Downloaded files does not seems to have profile variables"
+                echo " Check at MetaDB if profiles variables were set-up properly "
+                return 1
+        fi
+fi
+
+# Back up of the current infra-metadb-control.txt (if any)
+
+
+if [ -f /var/tmp/infra-metadb-control.txt ];then
+        rm -rf /var/tmp/infra-metadb-control.txt*
+        echo "Removed old backup file"
+fi
+
+# Replace the current with the new and clean
+
+if [ l$USING_FQDN = 1 ];then
+
+        cp -f /var/tmp/infra-metadb-control-$(hostname -f).clean.txt /var/tmp/infra-metadb-control.txt
+
+else
+        cp -f /var/tmp/infra-metadb-control-$(hostname -s).clean.txt /var/tmp/infra-metadb-control.txt
+        echo "Updated profile variables are at /var/tmp/infra-metadb-control.txt"
+fi
+
+}
+
+
+profile_metadb_update () {
+export control_dropfile=/var/tmp/infra-metadb-control.txt
+source $control_dropfile 2>/dev/null
+echo "Value:  $BUSINESSSTREAM "
+export profile_file="/hosting/.profile"
+
+if [ -f $profile_file ] ;
+  then
+    echo -e "${GRN}  OK:${NORM} $profile_file already present in the server"
+    cat $profile_file | grep -i "export BUSINESSSTREAM=$BUSINESSSTREAM"
+    if [ $? = 0 ] ; then
+#     echo "Vairable present"
+   #    echo "Already present"
+     :
+    else
+      echo -e "Substituting metadb values..."
+      echo "export BUSINESSSTREAM="$BUSINESSSTREAM""  >> $profile_file
+      if [ $? = 0 ]; then
+         echo -e "${GRN}  OK:${NORM} Substitution completed"
+      else
+        echo "Failed, exiting" exit 0
+     fi
+    fi
+  else
+    echo -e "${YEL} WARN:${NORM} $profile_file not present, creating the same..."
+    touch $profile_file && echo -e "${GRN}  OK:${NORM} Created $profile_file"
+
+
+echo "Substituting metadb values..."
+echo "export BUSINESSSTREAM="$BUSINESSSTREAM""  >> $profile_file
+if [ $? = 0 ]; then
+  echo -e "${GRN}  OK:${NORM} Substitution completed"
+else
+  echo "Failed, exiting" exit 0
+fi
+fi
+}
+
+restart_tomcat () {
+
+echo "restarting Tomcat instances.."
+service tomcatd restart
+
+}
+
+
+restart_Apache () {
+
+echo "restarting Apache instances.."
+service apached restart
+
+}
+
+case "$1" in
+  fullInstall)
+        Directory_creation && echo  -e " ${GRN}  OK:${NORM} Directory_creation ..... Done ===" || exit $? ;
+        Apache_configuration && echo  -e " ${GRN}  OK:${NORM} Apache configurations ..... Done ===" || exit $? ;
+        Tomcat_configuration && echo  -e " ${GRN}  OK:${NORM} Tomcat configurations ..... Done ===" || exit $? ;
+        get_metadb_profile && echo -e " ${GRN}  OK:${NORM} get_metadb_profile..... Done ===" || exit $? ;
+        profile_metadb_update && echo -e " ${GRN}  OK:${NORM} profile_metadb_update ..... Done ===" || exit $? ;
+        restart_tomcat   && echo "=== STEP OK: Tomcat restart Done ===" || exit $? ;
+        restart_Apache   && echo "=== STEP OK: Apache restart Done ===" || exit $? ;
+        Update_directory_permission && echo  -e " ${GRN}  OK:${NORM} Update_directory_permission ..... Done ===" || exit $? ;
+        delete_download_directory && echo  -e " ${GRN}  OK:${NORM} Download Directory Deletion Done ===" || exit $? ;
+ ;;
+   Apache)
+        Directory_creation && echo  -e " ${GRN}  OK:${NORM} Directory_creation ..... Done ===" || exit $? ;
+        Apache_configuration && echo  -e " ${GRN}  OK:${NORM} Apache configurations ..... Done ===" || exit $? ;
+        restart_Apache   && echo "=== STEP OK: Apache restart Done ===" || exit $? ;
+        Update_directory_permission && echo  -e " ${GRN}  OK:${NORM} Update_directory_permission ..... Done ===" || exit $? ;
+        delete_download_directory && echo  -e " ${GRN}  OK:${NORM} Download Directory Deletion Done ===" || exit $? ;
+;;
+   Tomcat)
+        Directory_creation && echo  -e " ${GRN}  OK:${NORM} Directory_creation ..... Done ===" || exit $? ;
+        Tomcat_configuration && echo  -e " ${GRN}  OK:${NORM} Tomcat configurations ..... Done ===" || exit $? ;
+        restart_tomcat   && echo "=== STEP OK: Tomcat restart Done ===" || exit $? ;
+        Update_directory_permission && echo  -e " ${GRN}  OK:${NORM} Update_directory_permission ..... Done ===" || exit $? ;
+        delete_download_directory && echo  -e " ${GRN}  OK:${NORM} Download Directory Deletion Done ===" || exit $? ;
+ ;;
+   Server)
+        get_metadb_profile && echo -e " ${GRN}  OK:${NORM} get_metadb_profile..... Done ===" || exit $? ;
+        profile_metadb_update && echo -e " ${GRN}  OK:${NORM} profile_metadb_update ..... Done ===" || exit $? ;
+        restart_tomcat   && echo "=== STEP OK: Tomcat restart Done ===" || exit $? ;
+        restart_Apache   && echo "=== STEP OK: Apache restart Done ===" || exit $? ;
+        Update_directory_permission && echo  -e " ${GRN}  OK:${NORM} Update_directory_permission ..... Done ===" || exit $? ;
+ ;;
+ *)
+         echo "Usage: $0 {fullInstall|Apache|Tomcat|Server}"
+         exit 1
+    ;;
+esac
