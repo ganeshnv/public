@@ -1,0 +1,3 @@
+echo -e "\e[1;31;40m......successfully installed CIFS package, proceed to mount the product.......\e[0m"  --- red
+echo -e "\e[1;32;40m......successfully installed CIFS package, proceed to mount the product.......\e[0m"  --- green
+echo -e "\e[1;33;40m......successfully installed CIFS package, proceed to mount the product.......\e[0m"  --- yellow
