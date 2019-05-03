@@ -1,0 +1,140 @@
+[root@lsdnw0bxeot hosting]# cat deployment1.yml
+---
+- name: restart tomcat service
+  hosts: all
+  ignore_errors: yes
+  force_handlers: yes
+  vars_files:
+    - vars.yml
+  tasks:
+        - name: create log directory
+          file:
+            path: /hosting/products/{{ item.0 }}/{{ item.1 }}
+            state: directory
+          with_nested:
+            - ["{{log_dir}}" , "{{log_dir}}"]
+            - ['config' , 'log']
+
+        - name: update metadb values
+          get_url:
+            url: http://reposerver/gwmtrepo/src/CEDP/Utility/get_profile.sh
+            dest: ~/
+            mode: 0755
+          tags: metadb
+        - name: run the script
+          command: nohup ~/get_profile.sh
+          register: output
+          notify: metadb
+          tags: metadb
+        - name: download product tar
+          get_url:
+            url: http://reposerver/gwmtrepo/src/CEDP/CCDP.DS.API.Customer.AccountData/{{prdct_installer_base}}_{{release_no}}.tar.gz
+            dest: ~/
+          tags: metadb
+        - name: extrack the tar
+          unarchive: src=~/{{prdct_installer_base}}_{{release_no}}.tar.gz  dest=~/ copy=no
+          register: output1
+          notify: metadb
+          tags: metadb
+        - name: copy war file to webapps directory
+          copy:
+            src: ~/{{prdct_installer_base}}_{{release_no}}/{{war_name}}
+            dest: /hosting/configs/tomcat8/tom_app-se-02/webapps/
+            remote_src: yes
+          register: output2
+          notify: metadb
+          tags: metadb
+
+        - name: download replace pv script
+          get_url:
+            url: http://reposerver/gwmtrepo/src/CEDP/Tomcat_Utility/replace_pv.sh
+            dest: ~/
+            mode: 0755
+          tags: metadb
+        - name: run the replace pv script
+          command: ~/replace_pv.sh
+          register: output3
+          notify: metadb
+          tags: metadb
+
+        - name: copy property & log file to under {{log_dir}} directory
+          copy:
+            src: "~/{{prdct_installer_base}}_{{release_no}}/{{ item }}"
+            dest: /hosting/products/{{log_dir}}/config
+            remote_src: yes
+            force: no
+          with_items:
+            - api.properties
+            - log4j2.xml
+          tags: metadb
+
+        - name: StopTomcat
+          command: nohup /hosting/configs/tomcat8/tom_app-se-01/bin/shutdown.sh
+          register: stop_status
+          notify: stop
+          tags: StopTomcat
+          #notify: metadb
+          #tags: metadb
+        - name: StartTomcat
+          command: nohup /hosting/configs/tomcat8/tom_app-se-01/bin/startup.sh
+          register: start_status
+          notify: start
+          tags: StartTomcat
+          #notify: metadb
+          #tags: metadb
+
+        - name: copy property & log file to under classes directory
+          copy:
+            src: "~/{{prdct_installer_base}}_{{release_no}}/{{ item }}"
+            dest: /hosting/configs/tomcat8/tom_app-se-02/webapps/{{app_name}}/WEB-INF/classes
+            remote_src: yes
+          with_items:
+            - api.properties
+            - log4j2.xml
+          tags: metadb
+        - name: StopTomcat
+          command: nohup /hosting/configs/tomcat8/tom_app-se-01/bin/shutdown.sh
+          register: stop_status
+          notify: stop
+          tags: StopTomcat
+          #notify: metadb
+          #tags: metadb
+        - name: StartTomcat
+          command: nohup /hosting/configs/tomcat8/tom_app-se-01/bin/startup.sh
+          register: start_status
+          #notify: metadb
+          #tags: metadb
+          async: 60
+          poll: 2
+          notify: stop
+          tags: StopTomcat
+
+
+
+        - name: remove the item files
+          file:
+            path: "~/{{ item }}"
+            state: absent
+          with_items:
+            - replace_pv.sh
+            - get_profile.sh
+            - "{{prdct_installer_base}}_{{release_no}}"
+            - "{{prdct_installer_base}}_{{release_no}}.tar.gz"
+          tags: metadb
+  handlers:
+    - name: metadb
+      debug:
+        var: "{{ item }}"
+      with_items:
+        - output
+        - output1
+        - output2
+        - output3
+        - stop_status
+        - start_status
+    - name: stop
+      debug:
+        var: stop_status
+    - name: start
+      debug:
+        var: start_status
