@@ -1,0 +1,356 @@
+#!/bin/bash
+
+
+
+#: Title       : /deploy_ds_custIndentity.sh
+#: Author      : GPC_CEDP
+#: Version     : 0.01
+#: Description : This is the deployment script for API.Customer.Identity
+#: REQ         : api.properties API.war log4j2.xml
+
+### Set Global Variables ###
+
+export prog=$(basename $0) ;
+export release_no=$( echo "$2" | sed -n 's/\./_/gp' ) ;
+export installer_base=/hosting/products/IR_Software ;
+export prdct_installer_base=$installer_base/cad_ds_api_custIdentity_install_bundle_$release_no ;
+export src_tar=cad_ds_api_custIdentity_install_bundle_$release_no.tar.gz ;
+export app_name="IdentityAPI" ;
+export file_Lst=(log4j2.xml api.properties) ;
+export log_file="log4j2.xml" ;
+export prop_file="api.properties" ;
+export METADB_DUMP="/var/tmp/infra-metadb-control.txt"
+export DS_JVM="$(awk -F\= '/CUSTOMERS_JVM_NAME/ {print $2}' $METADB_DUMP)"
+export LOG=${installer_base}/logs/api_customer_identity.log
+export product=API.Customer.Identity
+
+#values for secure port changes
+export war_name="IdentityAPI.war"
+export ent_cfg_dir=ccdp_ds_api_customer_identity/config ;
+export ent_log_dir=ccdp_ds_api_customer_identity/log ;
+
+### Set ANSI Text Colors ###
+RED='\033[31m' ; GRN='\033[32m' ; YEL='\033[33m' ; NAVY='\033[34m' ; PINK='\033[35m' ; BLU='\033[36m' ; ## Really this BLU is CYAN
+NORM='\033[0m' ; BOLD='\033[44;1;31m' ; ## RED ON BLU Background
+export RED GRN YEL BLU NAVY PINK BOLD NORM
+
+echo "
+  ====== INSTALL VARIABLES ======
+  ds_tomcat_bin=/hosting/configs/tomcat8/${DS_JVM}/bin
+  app_name="$app_name"
+  DATE=$DATE
+  INSTALL LOG=$LOG
+  METADB DUMP="$METADB_DUMP"
+  ===============================
+"
+
+Directory_creation () {
+
+if [ ! -d $installer_base ];then
+ mkdir -p $installer_base || { echo "Unable to create the directory" >&2; }
+else
+        :
+fi
+
+if [ ! -d ${installer_base}/logs/ ];then
+        mkdir -p ${installer_base}/logs/ || { echo "Unable to create the directory" >&2; }
+else
+        :
+fi
+
+if [ ! -d /hosting/products/$ent_cfg_dir ];then
+ mkdir -p /hosting/products/$ent_cfg_dir || { echo "Unable to create the directory" >&2; }
+else
+        :
+fi
+
+if [ ! -d /hosting/products/$ent_log_dir ];then
+ mkdir -p /hosting/products/$ent_log_dir || { echo "Unable to create the directory" >&2; }
+else
+        :
+fi
+
+if [ -f $LOG ];then
+        mv $LOG $LOG.PREV
+fi
+
+
+echo "################ $(date) $0 - Started ################" > $LOG ;
+}
+
+
+Download_archive ()
+{
+  echo "[Step 0.1] Download tar archive " | tee -a $LOG
+  cd $installer_base ;
+  if [ -d $prdct_installer_base ] || [ -e $src_tar ]
+    then
+    rm -rf $( basename $prdct_installer_base ) $src_tar 2>/dev/null || echo -e "${BOLD} ER: ${NORM} Old downloaded files could be deleted" | tee -a $LOG
+  else
+    echo -e "Old downloaded files don't seem to exist, proceeding ... " >> $LOG
+  fi
+  if ( cd $installer_base &&  wget --no-verbose --no-cache http://reposerver/gwmtrepo/src/CEDP/$product/$src_tar && tar -xzf $src_tar )
+    then
+    echo -e "${GRN}  OK: ${NORM} Successfully downloaded  and extracted tar file ...... " | tee -a $LOG
+        rm -f /tmp/wget.log.${$}
+  else
+    echo -e "${BOLD} ER: ${NORM} Could not wget and/or untar $src_tar .... \n" | tee -a $LOG ;
+        cat /tmp/wget.log.${$} | tee -a $LOG
+        ls -ald $src_tar >>$LOG 2>&1 #for debug purposes
+        file $src_tar >>$LOG 2>&1 #for debug purposes
+        tar -xzf $src_tar >>$LOG 2>&1 #for debug purposes
+    echo -e "Usage: $prog {fullInstall|Uninstall} {release_no} \n" | tee -a $LOG ; exit 1
+  fi
+}
+
+get_metadb_profile () {
+
+# Control Variable for short name vs FQDN
+USING_FQDN=0
+
+echo "Getting MetaDB profile for host: $(hostname -s)"
+
+if wget -q -o /tmp/wget.output.$$ http://metadbserver/metadbprofilerservice/profilervariable.asmx/GetProfilerVariablesMachine?machineName=$(hostname -s) -O /var/tmp/infra-metadb-control-$(hostname -s).txt ; then
+        echo " Profile for $(hostname -s) downloaded successfully"
+        rm /tmp/wget.output.$$
+ else
+        echo " Error downloading the profile"
+        cat /tmp/wget.output.$$
+        return 1
+fi
+
+# Simple Check for downloaded Profile
+
+if egrep -q '<add key=' /var/tmp/infra-metadb-control-$(hostname -s).txt ;then
+
+        egrep '<add.*' /var/tmp/infra-metadb-control-$(hostname -s).txt |cut -d \" -f2,4 |tr \" \= > /var/tmp/infra-metadb-control-$(hostname -s).clean.txt
+else
+        echo " Downloaded file does not seems to have profile variables"
+        echo " Trying using FQDN"
+        # Lets try using FQDN a.k.a hostname -f
+        if wget -q -o /tmp/wget.output.$$ http://metadbserver/metadbprofilerservice/profilervariable.asmx/GetProfilerVariablesMachine?machineName=$(hostname -f) -O /var/tmp/infra-metadb-control-$(hostname -f).txt ; then
+                echo "Profile for $(hostname -f) downloaded successfully"
+                rm /tmp/wget.output.$$
+        else
+                echo " Error downloading the profile"
+                cat /tmp/wget.output.$$
+                return 1
+        fi
+
+        # Test Again for profile variables
+        if egrep -q '<add key=' /var/tmp/infra-metadb-control-$(hostname -f).txt ;then
+                egrep '<add.*' /var/tmp/infra-metadb-control-$(hostname -f).txt |cut -d \" -f2,4 |tr \" \= > /var/tmp/infra-metadb-control-$(hostname -f).clean.txt
+                USING_FQDN=1
+        else
+                echo " Downloaded files does not seems to have profile variables"
+                echo " Check at MetaDB if profiles variables were set-up properly "
+                return 1
+        fi
+fi
+
+# Back up of the current infra-metadb-control.txt (if any)
+
+if [ -f /var/tmp/infra-metadb-control.txt ];then
+        rm -rf /var/tmp/infra-metadb-control.txt*
+        echo "Removed old backup file"
+fi
+
+# Replace the current with the new and clean
+
+if [ $USING_FQDN = 1 ];then
+
+        cp -f /var/tmp/infra-metadb-control-$(hostname -f).clean.txt /var/tmp/infra-metadb-control.txt
+
+else
+        cp -f /var/tmp/infra-metadb-control-$(hostname -s).clean.txt /var/tmp/infra-metadb-control.txt
+        echo "Updated profile variables are at /var/tmp/infra-metadb-control.txt"
+fi
+
+}
+
+
+seek_and_replace(){
+# function to get each variable from the  config file
+# get the value from MetaDB dump and replace the value
+# config files log4j2.xml api.properties mule-app.properties
+
+local config_file="$1"
+local metadb_dump="$2"
+local pvar
+
+# This loop creates  the list of variables needed
+# perl -ne 'while(/(LA.*?|API.*|ds.*)\$/g){ print "$1\n" }'
+# only variables starting with LA API ds
+# perl -ne 'while(/(\$.*?)\$/g){ print "$1\n" }'
+# any text string between $ $ is a variable
+for pvar in $(perl -ne 'while(/\$(.*?)\$/g){ print "$1\n" }' "$config_file" |sort|uniq); do
+        # Check for missing variables in profile.txt
+        if  ! grep -q "$pvar" $metadb_dump  ; then
+        echo -e "${BOLD} ER: ${NORM} The Variable $pvar was not found in $metadb_dump" | tee -a $LOG
+
+        fi
+
+        #get the variable value from profile.txt
+
+        #local pvar_value="$(grep -w $pvar $metadb_dump|awk -F\= '{print $2}')"
+        local pvar_value="$(grep -w $pvar $metadb_dump |  sed 's/[A-Za-z0-9._][A-Za-z0-9._]*=//')"
+        # Check for empty  variables
+
+        if [ -z $pvar_value ];then
+        echo -e "${BOLD} ER: ${NORM} The Variable $pvar was  found in $metadb_dump but it is empty or null" | tee -a $LOG
+        grep  "$pvar" $metadb_dump | tee -a $LOG
+
+        else
+
+        # The variable was found so proceed
+        # Replace the value in $config_file
+
+        if  ! sed -i 's|\$'"$pvar"'\$|'"$pvar_value"'|' $config_file  ; then
+                        echo -e "${BOLD} ER: ${NORM} Substitution of $pvar failed" | tee -a $LOG
+
+                fi
+     fi
+
+done
+}
+
+update_files(){
+local i
+echo "[Step 0.2] Updating files with MetaDB values " | tee -a $LOG
+
+for i in ${file_Lst[@]}; do
+        #check if file exists
+
+        if [ -f $prdct_installer_base/$i ]; then
+                # Removing possible \r and ^M characters
+                sed -i 's/\r//'  $prdct_installer_base/${i} || { echo 'ER: Error while updating files...' ; }
+                # calling our magic function
+                seek_and_replace $prdct_installer_base/$i $METADB_DUMP || { echo 'ER: Error while updating files...' ; }
+                chown hosting:hostnggp $prdct_installer_base/$i
+        else
+                echo -e "${BOLD} ER: ${NORM} file $i not found" | tee -a $LOG
+                ls -al $prdct_installer_base/ | tee -a $LOG
+
+        fi
+done
+
+echo -e "${GRN}  OK: ${NORM} Successfully updated files with MetaDB Values ...... " | tee -a $LOG
+}
+
+
+update_zip_package() {
+
+export war_path=/hosting/configs/tomcat8/$DS_JVM/webapps/$app_name/WEB-INF/classes
+
+echo "[Step 0.2] Updating zip package " | tee -a $LOG
+
+# Create a folder to mimic the zip folder structure
+mkdir -p "$prdct_installer_base"/WEB-INF/classes/
+
+cd "$prdct_installer_base" || { echo 'ER: Could not change to folder!' ; }
+
+# Move/Copy the files to the classes folder to mimic the zip folder structure
+cp ./$prop_file ./WEB-INF/classes/ || { echo 'ER: Could not copy file!' ; }
+cp ./$log_file  ./WEB-INF/classes/ || { echo 'ER: Could not move file to folder!' ; }
+
+# Update the files one by one to better control any special case
+
+if jar uvf ${war_name} WEB-INF/classes/$prop_file ; then
+        echo " File $prop_file updated in ${war_name}"
+else
+        echo -e "${BOLD} ER: ${NORM} Error updating ${war_name}" | tee -a $LOG
+fi
+
+if jar uvf ${war_name} WEB-INF/classes/$log_file ; then
+        echo " File $log_file updated in ${war_name}"
+else
+        echo -e "${BOLD} ER: ${NORM} Error updating ${war_name} " | tee -a $LOG
+fi
+
+echo "Check point to notice files updated properly" | tee -a $LOG
+war=`(unzip -l ${war_name} | grep -i WEB-INF/classes/$prop_file | awk '{print $1}')`
+drop=`(ls -l $prop_file | awk '{print $5}')`
+if [ "$war" != "$drop" ]; then
+echo -e "${BOLD} ER:${NORM} Could'nt copy  $prop_file $log_file to $war_name" | tee -a $LOG ; exit 1
+else
+echo -e "${GRN}  OK: ${NORM} Successfully updated files under $war_name in $war_path path .... " | tee -a $LOG
+fi
+
+}
+
+
+Filecopy () {
+echo "[Step 2] Copy files to various locations" | tee -a $LOG
+cd  $prdct_installer_base;
+    if ( rsync -avzq $prop_file $log_file  /hosting/products/$ent_cfg_dir )
+    then
+      echo -e "${GRN}  OK:${NORM} Successfully copied $prop_file $log_file to    /hosting/products/$ent_cfg_dir ...." | tee -a $LOG
+    else
+      echo -e "${BOLD} ER:${NORM} Could'nt copy  $prop_file $log_file to   /hosting/products/$ent_cfg_dir " | tee -a $LOG ; exit 1
+    fi
+}
+
+
+Copying_war ()
+{
+export ear_fl=$prdct_installer_base/$war_name
+export deploy_path=/hosting/configs/tomcat8/$DS_JVM/webapps
+echo deploypath=$deploy_path;
+rm -rf $deploy_path/${app_name}* && echo "old war removed "
+if(cp -rf $ear_fl $deploy_path); then
+echo -e "${GRN}  OK:${NORM} Successful copied the $war_name under webapps dir.."
+else
+echo -e "${BOLD} ER:${NORM} Unable to copy $war_name"
+exit 1
+fi
+}
+
+restart_tomcat () {
+
+service tomcatd restart $DS_JVM
+
+}
+
+delete_download_directory() {
+if [ -d $installer_base ] ;then
+cd $installer_base && rm -rf $prdct_installer_base $src_tar && echo -e "${GRN}  OK:${NORM} $installer_base has been deleted" || echo -e "${BOLD} ER:${NORM} Could not delete $installer_base directory" | tee -a $LOG ;
+else
+echo -e " ${GRN}  OK:${NORM} $installer_base does not seem to exist" | tee -a $LOG ;
+fi
+}
+
+Update_directory_permission ()
+{
+cd /hosting/;
+chown -R hosting:hostnggp /hosting -R && echo -e  "${GRN}  OK:${NORM} Directory Permission updated on under all /hosting/ directories/files " || echo "${BOLD} ER:${NORM} Error updating directory permission under /hosting "
+find /hosting -type d -exec chmod 750 {} + && find /hosting -type f -perm /g=w -exec chmod g-w {} \; && find /hosting -type f -perm /o=w -exec chmod o-w {} \;
+}
+
+
+######### MAIN #########
+case "$1" in
+    fullInstall)
+         Directory_creation && echo "=== STEP OK: Directory_creation ..... Done ===" || exit $? ;
+         Download_archive && echo "=== STEP OK: Tar file download ..... Done ===" || exit $? ;
+         get_metadb_profile && echo "=== STEP OK: updated the metadb values ..... Done ===" || exit $? ;
+         update_files && echo "=== STEP OK: Update Files with MetaDB values ..... Done ===" || exit $? ;
+         update_zip_package && echo "=== STEP OK: Update zip Package ..... Done ===" || exit $? ;
+         Filecopy && echo "=== STEP OK: Copying Files ..... Done ===" || exit $? ;
+         Copying_war && echo "=== STEP OK: War copy Done ===" || exit $? ;
+         Update_directory_permission && echo "=== STEP OK: Update_directory_permission Done ===" || exit $? ;
+         restart_tomcat   && echo "=== STEP OK: restart Done ===" || exit $? ;
+         Update_directory_permission && echo "=== STEP OK: Update_directory_permission Done ===" || exit $? ;
+         delete_download_directory && echo "=== STEP OK: Download Directory Deletion Done ===" || exit $? ;
+    ;;
+    Uninstall)
+         echo "Please attempt an uninstall only if this product has been installed " ;
+    ;;
+    *)
+         echo "Usage: $prog {fullInstall|Uninstall} {release_no} "
+         exit 1
+    ;;
+esac
+
+
+### remove ansi formatting from INSTALL LOG
+echo "INSTALL LOG = $LOG"
