@@ -1,0 +1,89 @@
+echo "-------------------------------------------------"
+if [ "$i" -lt "${#CERTNAME[@]}" ]; then
+        cd /tmp ; wget http://repo.domain/gwmtrepo/src/CEDP/Tomcat_Utility/Tomcat_Utility_Certificate/${CERTNAME[$i]}
+        if [ $? != 0 ] ; then
+                echo "#################################################"
+                echo "Certificate missing in repo!"
+                temp=1
+        else
+                cp /tmp/${CERTNAME[$i]} /hosting/products/serverscerts/
+        fi
+
+        sed -i 's/52428800/104857600/g' /hosting/configs/tomcat8/${instance}/webapps/manager/WEB-INF/web.xml
+        sed -i 's/-Xmx512m/-Xmx2048m/g' /hosting/configs/tomcat8/${instance}/bin/setenv.sh
+        cert_count=`expr $i + 1`
+#       cd /tmp; wget http://repo.domain/gwmtrepo/src/CEDP/Tomcat_Utility/server.xml
+        if [ "$ENV" = "prod" ] ; then
+                cd /tmp; wget http://repo.domain/gwmtrepo/src/CEDP/Tomcat_Utility/server.xml.prod${cert_count}
+#               cd /tmp; wget http://repo.domain/gwmtrepo/src/CEDP/Tomcat_Utility/server.xml.prod2
+                if [ `echo "${instance}" | awk -F'-' '{print $3}'` = 01 ] ; then
+                        echo yes | mv /tmp/server.xml.prod1 /hosting/configs/tomcat8/${instance}/conf/server.xml
+                elif [ `echo "${instance}" | awk -F'-' '{print $3}'` = 02 ] ; then
+                        echo yes | mv /tmp/server.xml.prod2 /hosting/configs/tomcat8/${instance}/conf/server.xml
+                fi
+        else
+
+                cd /tmp; wget http://repo.domain/gwmtrepo/src/CEDP/Tomcat_Utility/server.xml.${cert_count}
+#               cd /tmp; wget http://repo.domain/gwmtrepo/src/CEDP/Tomcat_Utility/server.xml.2
+                if [ `echo "${instance}" | awk -F'-' '{print $3}'` = 01 ] ; then
+                        echo yes | mv /tmp/server.xml.1 /hosting/configs/tomcat8/${instance}/conf/server.xml
+                elif [ `echo "${instance}" | awk -F'-' '{print $3}'` = 02 ] ; then
+                        echo yes | mv /tmp/server.xml.2 /hosting/configs/tomcat8/${instance}/conf/server.xml
+                fi
+                sed -i "s/INSTANCE/${INSTANCE[$i]}/g" /hosting/configs/tomcat8/${instance}/conf/server.xml
+        fi
+
+        chmod 640 /hosting/configs/tomcat8/${instance}/conf/server.xml
+        chown hosting:hostnggp /hosting/configs/tomcat8/${instance}/conf/server.xml
+        sed -i "s/PORT_NO/$PORTNO/g" /hosting/configs/tomcat8/${instance}/conf/server.xml
+        sed -i "s/CERT_NAME/${CERTNAME[$i]}/g" /hosting/configs/tomcat8/${instance}/conf/server.xml
+        PORTNO=`expr $PORTNO + 1`
+        i=`expr $i + 1`
+        echo "PortNo. and Certificate updated for $instance."
+        echo "-------------------------------------------------"
+else
+        echo "#################################################"
+        echo "Certificate missing for $instance! Please check.."
+        temp=1
+fi
+#c=0
+if [ "$c" -lt "${#cert[@]}" ]; then
+cd /tmp ; wget http://repo.domain/gwmtrepo/src/CEDP/Tomcat_Utility/Tomcat_Utility_Certificate/${cert[$c]}
+        if [ $? != 0 ] ; then
+                echo "#################################################"
+                echo "Certificate missing in repo!"
+                temp=1
+        else
+                cp /tmp/${cert[$c]} /hosting/products/serverscerts/trusted/
+        fi
+fi
+chown hosting:hostnggp /hosting -R
+#cd /tmp; rm -rf Tomcat_confi* Infra_patchvalidat* ccdp* cedp* hbs* buifapp* server.x*
+done
+
+for C in ${cert[@]}; do
+echo $C
+cd /tmp ; wget http://repo.domain/gwmtrepo/src/CEDP/Tomcat_Utility/Tomcat_Utility_Certificate/${C}
+        if [ $? != 0 ] ; then
+                echo "#################################################"
+                echo "Certificate missing in repo!"
+                temp=1
+        else
+                cp /tmp/${C} /hosting/products/serverscerts/trusted
+        fi
+done
+if [ -f /hosting/products/jdk/jdk1.8/jre/lib/security/cacerts ]; then
+ echo yes | mv /hosting/products/jdk/jdk1.8/jre/lib/security/cacerts /hosting/products/jdk/jdk1.8/jre/lib/security/cacerts.old
+fi
+ echo yes | mv /hosting/products/serverscerts/trusted/cacerts.zip /hosting/products/jdk/jdk1.8/jre/lib/security/
+cd /hosting/products/jdk/jdk1.8/jre/lib/security/; unzip cacerts.zip
+cd /hosting/products/serverscerts/trusted/
+echo yes | mv test2.fs${ENV}.domain.cer test2.ol${ENV}.domain.cer test2..com.cer /hosting/products/rpgwimcerts/bs 2>/dev/null
+echo yes | mv test3.${ENV}.domain.cer test3.${ENV}.domain.cer test3.domain.cer entb.${ENV}.domain.cer entb.${ENV}.domain.cer en.domain.cer /hosting/products/rpgwimcerts/ds 2>/dev/null
+echo yes | mv np.pfx cert.pfx  /hosting/products/serverscerts/ 2>/dev/nulli
+chown hosting:hostnggp /hosting -R
+
+
+if [ "$temp" = 1 ] ; then
+        exit 1;
+fi
