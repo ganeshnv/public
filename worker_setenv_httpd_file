@@ -1,0 +1,125 @@
+worker.properties
+
+worker.list=AddressReleaseAcctAPIRoute,AddressUpdateDataAPIRoute,AddressViewDataAPIRoute,ContactDataAPIRoute,IdentityAPIRoute,CustomerPreferencesAPIRoute,AccountDetailsAPIRoute,CustomerCrossReferencesAPIRoute,LinksCustomerAccountAPIRoute,AccountEligibilityAPIRoute,RewardsAPIRoute,AccountDocumentsAPIRoute,AccountMaterialsAPIRoute,AccountParticipantsAPIRoute,ReportingAPIRoute,AttestationAPIRoute,AccountRoute,status
+
+
+worker.CustomerPreferencesAPIRoute.type=ajp13
+worker.CustomerPreferencesAPIRoute.host=localhost
+worker.CustomerPreferencesAPIRoute.port=JK120
+worker.CustomerPreferencesAPIRoute.max_packet_size=65536
+
+
+
+worker.IdentityAPIRoute.type=ajp13
+worker.IdentityAPIRoute.host=localhost
+worker.IdentityAPIRoute.port=JK120
+worker.IdentityAPIRoute.max_packet_size=65536
+
+worker.status.type=status
+
+
+==============
+
+httpd.conf file
+
+LimitRequestLine 16384
+LoadModule env_module modules/mod_env.so
+SetEnv HTTPS on
+LoadModule jk_module modules/mod_jk.so
+JkWorkersFile /hosting/configs/apache24/BSinstance/web1/conf/workers.properties
+JKLogFile /hosting/configs/apache24/BSinstance/web1/logs/mod_jk.log
+JkLogLevel info
+
+LoadModule ssl_module modules/mod_ssl.so
+#LoadModule setenvif_module modules/mod_setenvif.so
+Listen 8443
+SSLPassPhraseDialog exec:/hosting/configs/apache24/BSinstance/web1/conf/ssl/echo_pwd.sh    
+
+<IfDefine SSL>
+<VirtualHost 0.0.0.0:8443>
+DocumentRoot /hosting/content/BSinstance/htdocs
+SSLEngine On
+#SSLProtocol ALL -SSLv2 -SSLv3
+SSLProtocol -ALL TLSv1.2
+#SSLCipherSuite HIGH:MEDIUM:!LOW:!SSLv2:!EXP:!ADH:!NULL:!aNULL:!eNULL
+SSLCipherSuite TLSv1.2:HIGH:!RC4:!MD5:!aNULL:!EDH:!SSLV2:!eNULL
+SSLHonorCipherOrder on
+SSLVerifyClient require
+SSLVerifyDepth 3
+SSLOptions +StdEnvVars +ExportCertData
+SSLCertificateKeyFile /hosting/configs/apache24/BSinstance/web1/conf/ssl/key.pem
+SSLCertificateFile /hosting/configs/apache24/BSinstance/web1/conf/ssl/cert.pem
+SSLCACertificateFile /hosting/configs/apache24/BSinstance/web1/conf/ssl/intermediate.crt
+SetEnvIf User-Agent ".*MSIE.*" /
+JkMount /AddressReleaseAcctAPI/* AddressReleaseAcctAPIRoute
+JkMount /AddressUpdateDataAPI/*  AddressUpdateDataAPIRoute
+JkMount /AddressViewDataAPI/*  AddressViewDataAPIRoute
+JkMount /ContactDataAPI/*  ContactDataAPIRoute
+JkMount /IdentityAPI/*  IdentityAPIRoute
+JkMount /CustomerPreferencesAPI/*  CustomerPreferencesAPIRoute
+JkMount /AccountDetailsAPI/* AccountDetailsAPIRoute
+JkMount /CustomerCrossReferencesAPI/* CustomerCrossReferencesAPIRoute
+JkMount /LinksCustomerAccountAPI/* LinksCustomerAccountAPIRoute
+JkMount /AccountEligibilityAPI/* AccountEligibilityAPIRoute
+JkMount /RewardsAPI/* RewardsAPIRoute
+JkMount /AccountDocumentsAPI/* AccountDocumentsAPIRoute
+JkMount /AccountMaterialsAPI/* AccountMaterialsAPIRoute
+JkMount /AccountParticipantsAPI/* AccountParticipantsAPIRoute
+JkMount /ReportingAPI/* ReportingAPIRoute
+JkMount /AttestationAPI/* AttestationAPIRoute
+JkMount /Account/* AccountRoute
+</VirtualHost>
+</IfDefine>
+
+====================
+
+echo_pwd.sh
+
+#!/bin/sh
+echo UGFzc3dvcmQxCg== | openssl enc -base64 -d
+
+====================
+
+
+setenv.sh
+
+
+JAVA_HOME=/hosting/products/jdk/jdk1.8
+#JAVA_HOME=/efs/dist/oracle/jdk/1.7.0/exec
+CATALINA_HOME=/hosting/products/tomcat/tomcat-8.5
+#CATALINA_HOME=/efs/dist/middleware/tomcat8_resources/8.0.20/exec
+CATALINA_BASE=/hosting/configs/tomcat8/tom_app-se-02
+JAVA_OPTS="$JAVA_OPTS -server -d64 -Xms512m -Xmx4096m -XX:NewSize=384m"
+# GC settings
+JAVA_OPTS="${JAVA_OPTS} -XX:+PrintGC -XX:+PrintGCDetails -XX:+PrintGCTimeStamps \
+-XX:SurvivorRatio=4 -XX:+PrintGCDateStamps \
+-XX:InitialTenuringThreshold=15 -XX:MaxTenuringThreshold=15 -XX:InitiatingHeapOccupancyPercent=45 \
+-XX:MaxGCPauseMillis=200 -XX:ParallelGCThreads=4 -XX:ConcGCThreads=2 \
+-XX:MinHeapFreeRatio=20 -XX:+PrintAdaptiveSizePolicy \
+-XX:+UseGCLogFileRotation -XX:NumberOfGCLogFiles=30 -XX:GCLogFileSize=1M \
+-XX:+UseG1GC -XX:+PrintGCApplicationConcurrentTime -XX:+PrintGCApplicationStoppedTime \
+-Xloggc:/hosting/logs/tom_app-se-02/GC.log \
+-XX:+HeapDumpOnOutOfMemoryError \
+-XX:HeapDumpPath=/hosting/logs/tom_app-se-02/heapdumps \
+-DAsyncLogger.RingBufferSize=128 \
+-XX:+PrintConcurrentLocks \
+-Dcom.sun.management.jmxremote.password.file=$CATALINA_BASE/conf/jmxremote.pwd \
+-Dcom.sun.management.jmxremote.access.file=$CATALINA_BASE/conf/jmxremote.access \
+-Dcom.sun.management.jmxremote.ssl=false"
+CATALINA_PID=/hosting/logs/tom_app-se-02/jvm.pid
+# Add umask setting to have log files created 750 - Apr 2011 RKH
+umask 027
+
+# Appdynamic Configuration start
+APPD_OPTS="-javaagent:/hosting/products/appdynamics/java_agent/javaagent.jar \
+-Dappdynamics.agent.applicationName=ClientHub_a25507_SE \
+-Dappdynamics.agent.tierName=CCDP-API-SE_m108428_tom_USVA02 \
+-Dappdynamics.agent.nodeName=lva68bdcgsas01v_tom_app-se-02"
+JAVA_OPTS="${JAVA_OPTS} $APPD_OPTS"
+# Appdynamic Configuration ends
+
+
+
+
+
+
