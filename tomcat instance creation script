@@ -1,0 +1,47 @@
+#!/bin/bash -x
+
+Tomcat_instance_install () {
+for i in {1..9}
+do
+sleep 3
+echo "-------------Tomcat instance creation - $i-----------------"
+   wget -nv --no-cache -O - http://reposerver/gwmtrepo/lxdeploy/bin/lxproduct | bash /dev/stdin GWIM.Linux.INF.MW_Tomcat8_inst${i} $1 --install
+   if [ "$?" = "0" ] ; then
+    echo -e "\e[1;32;40m  === Installed Tomcat instance${i} successfully ===== \e[0m"
+  else
+    echo -e "\033[31m ERROR:installation failed for tomcat instance${i}==== \e[0m"
+    exit 1
+fi
+echo "==================================="
+done
+}
+
+Tomcat_instance_uninstall () {
+
+for i in {1..9}
+do
+sleep 3
+echo "-------------Tomcat instance removal - $i-----------------"
+   wget -nv --no-cache -O - http://reposerver/gwmtrepo/lxdeploy/bin/lxproduct | bash /dev/stdin GWIM.Linux.INF.MW_Tomcat8_inst${i} $1 --uninstall
+   if [ "$?" = "0" ] ; then
+    echo -e "\e[1;32;40m  === Uninstalled Tomcat instance${i} successfully ===== \e[0m"
+  else
+    echo -e "\033[31m ERROR:Uninstallation failed for tomcat instance${i}==== \e[0m"
+    exit 1
+   fi
+echo "==================================="
+done
+}
+
+case "$1" in
+     install)
+     Tomcat_instance_install $2 && echo  -e " ${GRN}  OK:${NORM} Tomcat instances created successfully ===" || exit $? ;
+    ;;
+     uninstall)
+     Tomcat_instance_uninstall $2 && echo  -e " ${GRN}  OK:${NORM} Tomcat instances deleted successfully ===" || exit $? ;
+    ;;
+    *)
+    echo "Usage: $0 {install|uninstall}"
+    exit 1
+    ;;
+esac
